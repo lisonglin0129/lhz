@@ -1,0 +1,351 @@
+<?php
+defined('ShopMall') or exit('Access Invalid!');
+/**
+ * 银行第三方支付
+ * @author Administrator
+ *
+ */
+define("PAYURL",      "https://test.cpcn.com.cn/Gateway/InterfaceI");
+define("TXURL",   	  "https://test.cpcn.com.cn/Gateway/InterfaceII");
+define("PAYURL2",     "https://test.cpcn.com.cn/Gateway4PaymentUser/InterfaceI");
+define("TXURL2",      "https://test.cpcn.com.cn/Gateway4PaymentUser/InterfaceII");
+class CMBC {
+	private $ssl_path;
+	private $pay_data;
+	private $order_info;
+	protected  $key_start = '-----BEGIN CERTIFICATE-----';
+	protected  $key_end = '-----END CERTIFICATE-----';
+	private $ssl_key;
+	private $key_width = 64;
+	public function __construct($payment_info = array(),$order_info = array()){
+		$this->pay_data = $payment_info;
+		$this->order_info = $order_info;
+	
+		$this->ssl_key = $this->formatKey(trim($payment_info['payment_config']['SSL_KEY']));
+		$this->ssl_path = str_replace('CMBC.php', '', str_replace('\\', '/', __FILE__));
+	}
+	
+   /**
+	 * 结算
+	 */
+	public function reBill()
+	{
+		include 'Xml.php';
+		
+		$simpleXML= new SimpleXMLElement($xmltx1341);
+		//--绑定参数
+		$simpleXML->Body->InstitutionID= $this->pay_data['payment_config']['institutionID'];
+		$simpleXML->Body->SerialNumber= $this->order_info['pay_sn'];
+		$simpleXML->Body->OrderNo= $this->order_info['order_sn'];
+		$simpleXML->Body->Amount= floatval($this->order_info['bill_return']*100);
+		$simpleXML->Body->Remark= $this->order_info['message'];
+		$simpleXML->Body->AccountType= '11';
+		$simpleXML->Body->PaymentAccountName='';
+		$simpleXML->Body->PaymentAccountNumber='';
+		$simpleXML->Body->BankAccount->BankID=$this->order_info['BankID'];
+		$simpleXML->Body->BankAccount->AccountName = $this->order_info['buyer_name'];
+		$simpleXML->Body->BankAccount->AccountNumber = $this->order_info['card_number'];
+		$simpleXML->Body->BankAccount->BranchName='湖北';
+		$simpleXML->Body->BankAccount->Province='湖北';
+		$simpleXML->Body->BankAccount->City='';
+		$xmlStr = $simpleXML->asXML();
+		$message= base64_encode(trim($xmlStr));
+		$signature= $this->cfcasign_pkcs12(trim($xmlStr));
+		$response= $this->cfcatx_transfer($message,$signature);
+		$plainText= trim(base64_decode($response[0]));
+		$ok= $this->cfcaverify($plainText,$response[1]);
+		if($ok!=1)
+		{
+			return  false;
+		}else{	
+			$simpleXML= new SimpleXMLElement($plainText);
+			$txName="市场订单结算";
+			$txCode="1341";
+			return $plainText;
+		}
+		
+	}
+	/**
+	 * 格式化SSL秘钥
+	 * @param string $ssl_key
+	 * @return string
+	 */
+	public function formatKey($ssl_key = '')
+	{
+		$sslKey = $this->key_start."\r";
+		if(strlen($ssl_key) > 0 ) { 
+			$i = 0;
+			while($KeyLine = substr($ssl_key, ($i * 64) , $this->key_width))
+			{
+				$sslKey .= $KeyLine."\r";
+				$i++;
+			}
+		}
+		return $sslKey.$this->key_end;
+	}
+	/**
+	 * 退款
+	 */
+	public function refund()
+	{
+		include 'Xml.php';
+
+		$simpleXML= new SimpleXMLElement($xmltx1343);
+		//--绑定参数
+		$simpleXML->Body->InstitutionID= $this->pay_data['payment_config']['institutionID'];
+		$simpleXML->Body->SerialNumber= $this->order_info['pay_sn'];
+		$simpleXML->Body->OrderNo= $this->order_info['order_sn'];
+		$simpleXML->Body->Amount= floatval($this->order_info['refund_amount'])*100;
+		$simpleXML->Body->Remark= $this->order_info['message'];
+		$simpleXML->Body->AccountType= '11';
+		$simpleXML->Body->PaymentAccountName='';
+		$simpleXML->Body->PaymentAccountNumber='';
+		$simpleXML->Body->BankAccount->BankID=$this->order_info['BankID'];
+		$simpleXML->Body->BankAccount->AccountName = $this->order_info['buyer_name'];
+		$simpleXML->Body->BankAccount->AccountNumber = $this->order_info['card_number'];
+		$simpleXML->Body->BankAccount->BranchName='湖北';
+		$simpleXML->Body->BankAccount->Province='湖北';
+		$simpleXML->Body->BankAccount->City='';
+		$xmlStr = $simpleXML->asXML();
+		$message= base64_encode(trim($xmlStr));
+		$signature= $this->cfcasign_pkcs12(trim($xmlStr));
+		$response= $this->cfcatx_transfer($message,$signature);
+		$plainText= trim(base64_decode($response[0]));
+		$ok= $this->cfcaverify($plainText,$response[1]);
+	
+		if($ok!=1)
+		{
+			return  false;
+		}else{	
+			$simpleXML= new SimpleXMLElement($plainText);
+			$txName="市场订单结算";
+			$txCode="1343";
+			return $plainText;
+		}
+	}
+	/**
+	 * 跳转到第三方支付
+	 */
+	public function submit()
+	{
+		include 'Xml.php';
+		// 1.取得参数
+		//--机构号码
+	    $institutionID = $this->pay_data['payment_config']['institutionID'];
+	    //--订单号
+	    $orderNo = $this->order_info[order_list][0][order_sn];
+	    //--流水号
+	   // $paymentNo = $this->order_info[order_list][0][order_sn];
+	    $paymentNo = $this->order_info['pay_sn'];
+	    //--订单金额
+	    $amount = intval(($this->order_info['api_pay_amount']*100));
+	    //-- 付款者ID
+	    $payerID = $this->order_info['pay_id'];
+	    //--付款者名称
+	    $payerName = $this->order_info[order_list][0][buyer_name];
+	    //--资金用途
+	    $usage = $this->order_info[order_list][0][store_name];
+	    //--订单描述
+	    $remark = $this->order_info[subject];
+	    //--通知的url
+	    $notificationURL = $this->pay_data['payment_config']['NotificationURL'];
+	    //--收款人（以";"间隔）
+	    $payees = '';
+		$simpleXML= new SimpleXMLElement($xmltx1312);	
+		//赋值
+		$simpleXML->Body->InstitutionID=$institutionID;
+		$simpleXML->Body->OrderNo=$orderNo;
+		$simpleXML->Body->PaymentNo=$paymentNo;
+		$simpleXML->Body->Amount=$amount;
+		$simpleXML->Body->PayerID=$payerID;
+		$simpleXML->Body->PayerName=$payerName;
+		$simpleXML->Body->Usage=$usage;
+		$simpleXML->Body->Remark=$remark;
+		$simpleXML->Body->NotificationURL=$notificationURL;
+		$xmlStr = $simpleXML->asXML();
+		
+		foreach (explode(";",$payees) as $value)
+		{
+			$simpleXML->Body->PayeeList->addChild("Payee",$value);
+		}
+		$input = array(			
+				'extra_common_param'=> $this->order_info[order_type],
+				'message' => base64_encode(trim($xmlStr)),
+				'signature' => $this->cfcasign_pkcs12(trim($xmlStr))
+		);
+
+		$sHtml = '<form action="'.$this->pay_data['payment_config']['PAYURL'].'" name="form1" method="post">';
+		//$sHtml = '<form action="'.PAYURL.'" name="form1" method="post">';
+		while (list ($key, $val)  = each($input)) {
+			$sHtml.= "<input type='hidden' name='".$key."' value='".$val."'/>";
+		}
+		$sHtml = $sHtml . '</form>';
+		$sHtml = $sHtml."<script>document.forms['form1'].submit();</script>";
+		echo $sHtml;
+	}
+	public function return_verify()
+	{
+		$param	= $_GET;
+		//将系统的控制参数置空，防止因为加密验证出错
+		$param['act']	= '';
+		$param['op']	= '';
+		$param['payment_code'] = '';
+		$param['payment_code'] = '';
+		$message = $_POST["message"];
+		$signature = trim($_POST["signature"]);
+		$plainText = trim(base64_decode($message));
+		$ok = $this->cfcaverify($plainText,$signature);
+		//--验证参数
+		$simpleXML= new SimpleXMLElement($plainText);
+		$txCode  =  $simpleXML->Head->TxCode;
+		/* 
+		 * $data = array('InstitutionID' => '0024','PaymentNo'=>$simpleXML->Body->PaymentNo);
+		   $this->get_web_content($data); 
+		 */
+		if(1 == $ok) {
+			return true;
+		}else {
+			return false;
+		}
+	}
+	
+	public function notify_verify()
+	{
+		$param	= $_GET;
+		//将系统的控制参数置空，防止因为加密验证出错
+		$param['act']	= '';
+		$param['op']	= '';
+		$param['payment_code'] = '';
+		$message = $_POST["message"];
+		$signature = trim($_POST["signature"]);
+		$plainText = trim(base64_decode($message));
+		$ok = $this->cfcaverify($plainText,$signature);
+		//--验证参数
+		$simpleXML= new SimpleXMLElement($plainText);
+		$txCode  =  $simpleXML->Head->TxCode;
+		/* $data = array('InstitutionID' => '0024','PaymentNo'=>$simpleXML->Body->PaymentNo);
+		$this->get_web_content($data); */
+		if(1 == $ok) {
+			return true;
+		}else {
+			return false;
+		}
+	}
+	// 签名函数
+	private function cfcasign_pkcs12($plainText){
+		$p12cert = array();
+		$file = $this->ssl_path.$this->pay_data['payment_config']['PRIVATE_KEY'];
+		$fd = fopen($file, 'r');
+		$p12buf = fread($fd, filesize($file));
+		fclose($fd);
+		openssl_pkcs12_read($p12buf, $p12cert, $this->pay_data['payment_config']['PRIVATE_KEY_PASSWORD']);
+		if(!$p12cert)
+		{
+			die('证书密码错误!!!!');
+		}
+		$pkeyid = $p12cert["pkey"];
+		$binary_signature = "";
+		openssl_sign($plainText, $binary_signature, $pkeyid,OPENSSL_ALGO_SHA1);
+		return bin2hex($binary_signature);
+	}
+	
+	// 验签函数
+	private function cfcaverify($plainText,$signature){
+		$fcert = fopen($this->ssl_path.$this->pay_data['payment_config']['PUBLIC_KEY'], "r");
+		$cert = fread($fcert, 8192);
+		fclose($fcert);
+		$binary_signature = pack("H" . strlen($signature), $signature);
+		$ok = openssl_verify($plainText, $binary_signature, $cert);
+
+		return $ok;
+	}
+	
+	//访问网页数据
+	private function get_web_content( $curl_data )
+	{
+		$options = array(
+				CURLOPT_RETURNTRANSFER => true,         // return web page
+				CURLOPT_HEADER         => false,        // don't return headers
+				CURLOPT_FOLLOWLOCATION => true,         // follow redirects
+				CURLOPT_ENCODING       => "",           // handle all encodings
+				CURLOPT_USERAGENT      => "institution",     // who am i
+				CURLOPT_AUTOREFERER    => true,         // set referer on redirect
+				CURLOPT_CONNECTTIMEOUT => 120,          // timeout on connect
+				CURLOPT_TIMEOUT        => 120,          // timeout on response
+				CURLOPT_MAXREDIRS      => 10,           // stop after 10 redirects
+				CURLOPT_POST            => 1,            // i am sending post data
+				CURLOPT_POSTFIELDS     => $curl_data,    // this are my post vars
+				CURLOPT_SSL_VERIFYHOST => 0,            // don't verify ssl
+				CURLOPT_SSL_VERIFYPEER => false,        //
+				CURLOPT_VERBOSE        => 1                //
+		);
+	
+		$ch      = curl_init(TXURL);
+		curl_setopt_array($ch,$options);
+		curl_setopt($ch,CURLOPT_HTTPHEADER,array("Expect:"));
+		$content = curl_exec($ch);
+		curl_close($ch);
+		return $content;
+	
+	}
+	
+	private function get_web_content2( $curl_data )
+	{
+		$options = array(
+				CURLOPT_RETURNTRANSFER => true,         // return web page
+				CURLOPT_HEADER         => false,        // don't return headers
+				CURLOPT_FOLLOWLOCATION => true,         // follow redirects
+				CURLOPT_ENCODING       => "",           // handle all encodings
+				CURLOPT_USERAGENT      => "institution",     // who am i
+				CURLOPT_AUTOREFERER    => true,         // set referer on redirect
+				CURLOPT_CONNECTTIMEOUT => 120,          // timeout on connect
+				CURLOPT_TIMEOUT        => 120,          // timeout on response
+				CURLOPT_MAXREDIRS      => 10,           // stop after 10 redirects
+				CURLOPT_POST            => 1,            // i am sending post data
+				CURLOPT_POSTFIELDS     => $curl_data,    // this are my post vars
+				CURLOPT_SSL_VERIFYHOST => 0,            // don't verify ssl
+				CURLOPT_SSL_VERIFYPEER => false,        //
+				CURLOPT_VERBOSE        => 1                //
+		);
+	
+		$ch      = curl_init(TXURL2);
+		curl_setopt_array($ch,$options);
+		curl_setopt($ch,CURLOPT_HTTPHEADER,array("Expect:"));
+		$content = curl_exec($ch);
+		curl_close($ch);
+		return $content;
+	
+	}
+	
+	//同步交易方式向支付平台发送请求，支付平台返回一个数组，其中第一个元素为message，第二个为signature。注意这两个参数为支付平台返回。
+	private function cfcatx_transfer($message,$signature){
+		$post_data = array();
+		$post_data['message'] = $message;
+		$post_data['signature'] = $signature;
+	
+		$response= $this->get_web_content($this->data_encode($post_data) );
+		$response=trim($response);
+	
+		return explode(",",$response);
+	}
+	private function cfcatx_transfer2($message,$signature){
+		$post_data = array();
+		$post_data['message'] = $message;
+		$post_data['signature'] = $signature;
+	
+		$response= $this->get_web_content2($this->data_encode($post_data) );
+		$response=trim($response);
+	
+		return explode(",",$response);
+	}
+	//提交数据前要进行一下urlencode转换
+	private function data_encode($data, $keyprefix = "", $keypostfix = "") {
+		assert( is_array($data) );
+		$vars=null;
+		foreach($data as $key=>$value) {
+			if(is_array($value)) $vars .= $this->data_encode($value, $keyprefix.$key.$keypostfix.urlencode("["), urlencode("]"));
+			else $vars .= $keyprefix.$key.$keypostfix."=".urlencode($value)."&";
+		}
+		return $vars;
+	}
+}
